@@ -110,13 +110,14 @@ def build_graph(filenamelist, device=''):
         f = h5py.File(file, 'r')
         df = f['feature'][:]
         for i in range(df.shape[0]):
-            df_i = df[i]##8*26
+            df_i = df[i]##8*25
             Np = 0
             for j in range(25):
                 if df_i[0,j]==0 and df_i[1,j]==0:
                     Np = j
                     break
             if Np <=1: continue##at least 2 hits
+            if df_i[1,0] < parsed['E_min']:continue##seed energy
             dfi = df_i[:,0:Np]
             dfi[0  ,:] /= 40. ## time scale
             dfi[2:8,:] /= 100.## position scale
@@ -221,7 +222,8 @@ def count_training_evts(filenamelist):
     for file in filenamelist:
         f = h5py.File(file, 'r')
         label = f['feature']
-        tot_n += label.shape[0]
+        #tot_n += label.shape[0]
+        tot_n += np.sum( label[:,1,0] > parsed['E_min'])
         #tmp_index = label[:,9]<=0 ##no c14 hit
         #tmp_index1 = label[:,9]>nhit_c14 # c14 hit
         #tot_n_pu += int( np.sum(tmp_index1) )
@@ -634,6 +636,7 @@ if (__name__ == '__main__'):
     parser.add_argument('--activation' , default='relu', type=str, help='')
     parser.add_argument('--weight', default=1., type=float, help='')
     parser.add_argument('--notime', action='store', type=ast.literal_eval, default=True, help='')
+    parser.add_argument('--E_min', default=1.0, type=float, help='')
     
     parsed = vars(parser.parse_args())
 

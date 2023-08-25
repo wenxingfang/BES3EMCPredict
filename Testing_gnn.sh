@@ -14,7 +14,7 @@
 #SBATCH --account=junogpu
   
 # Specify your job name, optional option, but strongly recommand to specify some name
-#SBATCH --job-name=seed
+#SBATCH --job-name=test_seed
   
 # Specify how many cores you will need, default is one if not specified
 #SBATCH --ntasks=1
@@ -22,8 +22,8 @@
 # Specify the output file path of your job
 # Attention!! Your afs account must have write access to the path
 # Or the job will be FAILED!
-#SBATCH --output=/hpcfs/juno/junogpu/fangwx/FastSim/BES/BES3EMCPredict/log_train_gnn.out
-#SBATCH --error=//hpcfs/juno/junogpu/fangwx/FastSim/BES/BES3EMCPredict/log_train_gnn.err
+#SBATCH --output=/hpcfs/juno/junogpu/fangwx/FastSim/BES/BES3EMCPredict/log_test_gnn.out
+#SBATCH --error=//hpcfs/juno/junogpu/fangwx/FastSim/BES/BES3EMCPredict/log_test_gnn.err
   
 # Specify memory to use, or slurm will allocate all available memory in MB
 #SBATCH --cpus-per-task=1
@@ -47,4 +47,5 @@ conda activate pyTorch_1p8
 which python
 /usr/local/cuda/bin/nvcc --version
 export workpath=/hpcfs/juno/junogpu/fangwx/FastSim/BES/BES3EMCPredict/
-python $workpath/train_gnn.py --E_min 1.0 --notime True  --epochs 50 --lr 5e-4 --batch 256 --scheduler 'OneCycleLR' --train_file $workpath/dataset/train.txt --valid_file $workpath/dataset/valid.txt --test_file $workpath/dataset/test.txt --out_name $workpath/model/gnn.pth
+python $workpath/train_gnn.py --E_min 1.0 --notime True  --epochs 50 --lr 5e-4 --batch 256 --scheduler 'OneCycleLR' --DoOptimization False  --DoTest True --Restore True  --restore_file $workpath/model/gnn_epoch29.pth --train_file $workpath/dataset/train.txt --valid_file $workpath/dataset/valid.txt --test_file $workpath/dataset/train.txt --outFile $workpath/Pred/gnn_train.h5
+python $workpath/train_gnn.py --E_min 1.0 --notime True  --epochs 50 --lr 5e-4 --batch 256 --scheduler 'OneCycleLR' --DoOptimization False  --DoTest True --Restore True  --restore_file $workpath/model/gnn_epoch29.pth --train_file $workpath/dataset/train.txt --valid_file $workpath/dataset/valid.txt --test_file $workpath/dataset/test.txt --outFile $workpath/Pred/gnn_test.h5

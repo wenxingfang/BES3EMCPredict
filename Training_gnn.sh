@@ -47,4 +47,5 @@ conda activate pyTorch_1p8
 which python
 /usr/local/cuda/bin/nvcc --version
 export workpath=/hpcfs/juno/junogpu/fangwx/FastSim/BES/BES3EMCPredict/
-python $workpath/train_gnn.py --E_min 1.0 --notime True  --epochs 50 --lr 5e-4 --batch 256 --scheduler 'OneCycleLR' --train_file $workpath/dataset/train.txt --valid_file $workpath/dataset/valid.txt --test_file $workpath/dataset/test.txt --out_name $workpath/model/gnn.pth
+python $workpath/train_gnn_feas.py --useSeed True --E_min 0.5 --E_max 2.0 --notime True  --epochs 50 --lr 5e-4 --batch 256 --scheduler 'OneCycleLR' --train_file $workpath/dataset/noTof_flat_feas/train.txt --valid_file $workpath/dataset/noTof_flat_feas/valid.txt --test_file $workpath/dataset/noTof_flat_feas/test.txt --out_name $workpath/model/gnn_feas.pth
+#python $workpath/train_gnn.py --E_min 1.0 --notime True  --epochs 50 --lr 5e-4 --batch 256 --scheduler 'OneCycleLR' --train_file $workpath/dataset/train.txt --valid_file $workpath/dataset/valid.txt --test_file $workpath/dataset/test.txt --out_name $workpath/model/gnn.pth

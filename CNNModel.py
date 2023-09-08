@@ -81,7 +81,8 @@ def make_layers_dim(cfg, in_channels, batch_norm=False, useRes=False, dim=2, bn_
                 conv = ResConvBlock(in_channels, v, dim, batch_norm)
                 layers += [conv]
             else:
-                conv = nn.Conv2d(in_channels, v, kernel_size=3) if dim==2 else nn.Conv1d(in_channels, v, kernel_size=3)
+                #conv = nn.Conv2d(in_channels, v, kernel_size=3) if dim==2 else nn.Conv1d(in_channels, v, kernel_size=3)
+                conv = nn.Conv2d(in_channels, v, kernel_size=2) if dim==2 else nn.Conv1d(in_channels, v, kernel_size=2)
                 if batch_norm:
                     layers += [conv, nn.BatchNorm2d(v) if dim==2 else nn.BatchNorm1d(v), nn.ReLU(inplace=True)] if bn_after==False else [conv, nn.ReLU(inplace=True), nn.BatchNorm2d(v) if dim==2 else nn.BatchNorm1d(v)]
                 else:
@@ -251,8 +252,8 @@ class Vgg(nn.Module):
     def forward(self, x, x_add):
         #print('x size=',x.size(),',x_add=',x_add.size() ) #(N, 124, 231, 2), (N, 4)
         #tot_pe = torch.sum(x[:,:,:,0:1], dim=(1,2), keepdim=False )/1000  
-        x = x.transpose(1,3)##N,X,Y,F -> N,F,Y,X
-        x = x.transpose(2,3)##N,F,Y,X -> N,F,X,Y
+        #x = x.transpose(1,3)##N,X,Y,F -> N,F,Y,X
+        #x = x.transpose(2,3)##N,F,Y,X -> N,F,X,Y
         #print('x tranposed size=',x.size()) #(N, 2, 124, 231)
         # the first two values in the pad input correspond to the last dimension
         #x = F.pad(input=x, pad=(0, 1, 1, 1), mode='constant', value=0)
@@ -421,13 +422,16 @@ class TFENet(nn.Module):
         emb_dim = hyperparameters['emb_dim']
         fcs_cfg = hyperparameters['fcs_cfg']
         dropout = hyperparameters['dropout']
+        last_act = hyperparameters['last_act']
+        nlayers = hyperparameters['nlayers']
+        nhead = hyperparameters['nhead']
+        nhid = hyperparameters['nhid']
+        en_dropout = hyperparameters['en_dropout']
         self.usePSEN = hyperparameters['psencoding']
-        ext_dim = hyperparameters['ext_dim']
-        nlayers = 2#3#2
-        nhead = 16#8
-        nhid = 2048#default
+        #nlayers = 2
+        #nhead = 8
+        #nhid = 2048#default
         #en_dropout = 0.1#default
-        en_dropout = 0.05#default
         self.emb = nn.Conv1d(in_channels, emb_dim, kernel_size=1)
         pre_list = [self.emb, nn.BatchNorm1d(emb_dim)]
         self.pre_layer = nn.ModuleList(pre_list)
@@ -440,11 +444,13 @@ class TFENet(nn.Module):
         fcs_list = []
         for i in range(len(fcs_cfg)):
             if i == 0:
-                fcs_list.append(  nn.Linear(emb_dim+ext_dim, fcs_cfg[i]) )
+                fcs_list.append(  nn.Linear(emb_dim, fcs_cfg[i]) )
                 fcs_list.append( nn.ReLU(True) )
                 if(dropout != 0): fcs_list.append( nn.Dropout(p=dropout) )
             elif i== (len(fcs_cfg)-1):
                 fcs_list.append(  nn.Linear(fcs_cfg[i-1], fcs_cfg[i]) )
+                if last_act =='tanh':
+                    fcs_list.append( nn.Tanh() )
             else:
                 fcs_list.append(  nn.Linear(fcs_cfg[i-1], fcs_cfg[i]) )
                 fcs_list.append( nn.ReLU(True) )
@@ -453,7 +459,7 @@ class TFENet(nn.Module):
 
 
 
-    def forward(self, src, ext):#N,F,bin, N,F1,1
+    def forward(self, src):#N,F,bin
         if torch.any(torch.isnan(src)):
             print('src_in find nan')
         mask = (src.abs().sum(dim=1, keepdim=True) != 0)  # (N, 1, bin)
@@ -484,7 +490,6 @@ class TFENet(nn.Module):
         if torch.any(count<=0):
             print('find zero count')
         out = torch.sum(out, 1)/count ## N,bin,emb -> N,emb
-        out = torch.cat((out,ext),1)##N,emb -> N,emb+ext_dim
         #print('out1 nan=',torch.any(torch.isnan(out)) )
         for i in self.fcs:
             out = i(out)

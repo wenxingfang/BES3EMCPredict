@@ -286,7 +286,8 @@ class CrystalNet(nn.Module):
             x_gravnet_per_block.append(x)
         x = torch.cat(x_gravnet_per_block, dim=-1)
         x = global_reduce(x,batch)
-        x = torch.cat((x,ext), dim=1)
+        if torch.all(ext==0) == False:
+            x = torch.cat((x,ext), dim=1)
         x = self.postgn_dense(x)
         x = self.output(x)
         return x

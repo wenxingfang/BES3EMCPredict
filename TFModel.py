@@ -484,7 +484,8 @@ class TFENet(nn.Module):
         if torch.any(count<=0):
             print('find zero count')
         out = torch.sum(out, 1)/count ## N,bin,emb -> N,emb
-        out = torch.cat((out,ext),1)##N,emb -> N,emb+ext_dim
+        if torch.all(ext==0) == False:
+            out = torch.cat((out,ext),1)##N,emb -> N,emb+ext_dim
         #print('out1 nan=',torch.any(torch.isnan(out)) )
         for i in self.fcs:
             out = i(out)

@@ -20,7 +20,7 @@ import random
 #import torch.distributions as td
 #from matplotlib.lines import Line2D
 #from particle_net import get_model_decay, get_model_TwoBodys, get_model_TwoBodysV2, get_model_TwoBodysV3
-from CNNModel import Vgg
+from gravnet import CrystalNet
 #torch.autograd.set_detect_anomaly(True)
 try:
     import nvidia_smi
@@ -100,77 +100,119 @@ class ce_loss_w(nn.Module):
 
 
 
-#from torch_geometric.data import Batch as GraphBatch
-#from torch_geometric.data import Data as GraphData
-#from torch_geometric.loader import DataLoader as GraphDataLoader
-#
-#def build_graph(filenamelist, device=''):
-#    graphs = []
-#    for file in filenamelist:
-#        f = h5py.File(file, 'r')
-#        df = f['feature'][:]
-#        for i in range(df.shape[0]):
-#            df_i = df[i]##8*25
-#            Np = 0
-#            for j in range(25):
-#                if df_i[0,j]==0 and df_i[1,j]==0:
-#                    Np = j
-#                    break
-#            if Np <=1: continue##at least 2 hits
-#            if df_i[1,0] < parsed['E_min']:continue##seed energy
-#            dfi = df_i[:,0:Np]
-#            dfi[0  ,:] /= 40. ## time scale
-#            dfi[2:8,:] /= 100.## position scale
-#            dfi = np.transpose(dfi,(1,0))##F,P --> P,F
-#            tmp_x = torch.tensor(dfi[1: ,0:8].astype('float32'))
-#            tmp_y = torch.tensor(dfi[0:1,0:8].astype('float32'))
-#            tb_graph = GraphData(x=tmp_x,y=tmp_y)
-#            graphs.append(tb_graph)
-#        f.close()
-#    #graphs = GraphBatch.from_data_list(graphs).to(device)
-#    return graphs
+from torch_geometric.data import Batch as GraphBatch
+from torch_geometric.data import Data as GraphData
+from torch_geometric.loader import DataLoader as GraphDataLoader
+
+def build_graph(filenamelist, device=''):
+    graphs = []
+    for file in filenamelist:
+        f = h5py.File(file, 'r')
+        df = f['feature'][:]
+        df_label = f['label'][:]
+        for i in range(df.shape[0]):
+            df_i = df[i]##13*49
+            Np = 0
+            for j in range(49):
+                if df_i[0,j]==0 and df_i[1,j]==0:
+                    Np = j
+                    break
+            if Np <=1: continue##at least 2 hits
+            if df_i[1,0] < parsed['E_min'] or df_i[1,0] > parsed['E_max']:continue##seed energy
+            dfi = df_i[:,0:Np]
+            dfi[0  ,:] /= 40. ## time scale
+            dfi = np.transpose(dfi,(1,0))##F,P --> P,F
+            tmp_x = torch.tensor(dfi.astype('float32'))
+            tmp_y = torch.tensor(df_label[i:i+1,:].astype('float32'))##mc E
+            tb_graph = GraphData(x=tmp_x,y=tmp_y)
+            graphs.append(tb_graph)
+        f.close()
+    #graphs = GraphBatch.from_data_list(graphs).to(device)
+    return graphs
 
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self, filenamelist):
+    def __init__(self, filenamelist, Np_min, in_features):
         super(Dataset, self).__init__()
         print("Reading Dataset")
         self.data = None
         self.data_label = None
+        self.data_train = None
         for file in filenamelist:
             f = h5py.File(file, 'r')
-            df = f['feature'][:]##N,13,25
-            df_label = f['label'][:]
-            #tmp_idx  = df[:,1,0] > parsed['E_min']
-            tmp_idx = np.logical_and(df[:,1,parsed['iSeed'],parsed['iSeed']] > parsed['E_min'], df[:,1,parsed['iSeed'],parsed['iSeed']] < parsed['E_max'])
-            df = df[tmp_idx]
-            df_label = df_label[tmp_idx]
-            if df.shape[0] <=0:continue
-            df_sub = np.sum(df[:,1,:,:],axis=(1,2),keepdims=False)-df[:,1,parsed['iSeed'],parsed['iSeed']]
-            tmp_idx = df_sub > 0
-            df = df[tmp_idx]
-            df_label = df_label[tmp_idx]
-            if df.shape[0] <=0:continue
-            df[:,0,:,:] /= 40.
-            df_label[:,0] /= parsed['E_scale']
-            if parsed['useSeed']:
-                #df[:,1,2,2] = 0. ##set seed e to 0
-                df[:,1,parsed['iSeed'],parsed['iSeed']] = 0. ##set seed e to 0,FIXME, for 7x7
-                #pass
-            elif parsed['useAll']:
-                pass
-            else:
-                #df[:,:,2,2] = 0. ##set seed e to 0
-                df[:,:,parsed['iSeed'],parsed['iSeed']] = 0. ##set seed e to 0,FIXME, for 7x7
-            tmp_label = torch.tensor(df_label.astype('float32'))
+            f_json = file.replace('.h5','.json')
+            f_io = open(f_json,'r')
+            link_dict = json.load(f_io)
+            df = f['feature'][:]
+            df_train = f['feature_train'][:,in_features,:,:]
+            #print('link len()=',len(link_dict),',df shape=',df.shape,',df_train=',df_train.shape)         
+            assert df.shape[0]==len(link_dict)
+            n_points = df.shape[2]
+            tmp_links = np.full((df.shape[0],n_points,n_points),0,np.float32)
+            #tmp_links = np.full((df.shape[0],n_points,n_points),-1,np.float32)
+            for i in range(len(link_dict)):
+                if len(link_dict[i])<=0:continue
+                for lk in link_dict[i]:
+                    tmp_links[i,lk[0],lk[1]] = 1 
+                    tmp_links[i,lk[1],lk[0]] = 1 
+                    #pdg_0 = df[i,5,lk[0] ]
+                    #pdg_1 = df[i,5,lk[1] ]
+                    #pdg_mo_0 = df[i,6,lk[0] ]
+                    #pdg_mo_1 = df[i,6,lk[1] ]
+                    #assert pdg_mo_0 == pdg_mo_1
+                    #if pdg_mo_0 == 111:
+                    #    print('found pi0,pdg0=',pdg_0,',pdg1=',pdg_1)
+                    
+            for i in range(tmp_links.shape[1]):
+                tmp_links[:,i,i] = 1
+       
+            tmp_label = torch.tensor(tmp_links.astype('float32'))
             self.data_label = tmp_label if self.data_label is None else torch.cat((self.data_label,tmp_label),0)
             tmp_tensor = torch.tensor(df.astype('float32'))
             self.data = tmp_tensor if self.data is None else torch.cat((self.data,tmp_tensor),0)
+            tmp_tensor_train = torch.tensor(df_train.astype('float32'))
+            self.data_train = tmp_tensor_train if self.data_train is None else torch.cat((self.data_train,tmp_tensor_train),0)
+
+            f_io.close()
             f.close()
-                                   
+        if Np_min !=0:
+            del_list = []
+            for i in range(self.data.shape[0]):
+                Np = 0
+                for j in range(self.data.shape[2]):
+                    if self.data[i,3,j] != 0: Np=j+1##px,py,pz,e,m
+                    else: break
+                if Np < Np_min: del_list.append(i)
+            self.data_label = np.delete(self.data_label, del_list, 0)
+            self.data       = np.delete(self.data      , del_list, 0)
+            self.data_train = np.delete(self.data_train, del_list, 0)
+        self.data_dist = None
+        #self.data_dist = np.full((self.data.shape[0],2,self.data.shape[2]),0,np.float32)
+        #for i in range(self.data.shape[0]):
+        #    for j in range(self.data.shape[2]):
+        #        if self.data[i,3,j] <= 0 : break
+        #        px = self.data[i,0,j]
+        #        py = self.data[i,1,j]
+        #        pz = self.data[i,2,j]
+        #        pt = math.sqrt(px*px + py*py)
+        #        p  = math.sqrt(px*px + py*py + pz*pz)
+        #        costheta = pz/p ## -1 to 1
+        #        theta = math.acos(costheta)##0-pi
+        #        cosphi = px/pt
+        #        phi = math.acos(cosphi)
+        #        if py < 0: phi = 2*math.pi - phi 
+        #        self.data_dist[i,0,j] = theta
+        #        self.data_dist[i,1,j] = phi
+
+        #if self.data_1D != None:
+        #    self.data_1D[:,0,:] = self.data_1D[:,0,:]/(1.0*scale_1d)
+        #    self.data_1D[:,1,:] = self.data_1D[:,1,:]/(1.0*scale_1d_tcor)
+                                    
     def __getitem__(self, index):
         da = self.data[index,] if self.data != None else torch.tensor([0])
+        da_wise = self.data_train[index,] if self.data_train != None else torch.tensor([0])
         da_label = self.data_label[index,] if self.data_label != None else torch.tensor([0])
-        return (da, da_label)
+        da_dist = self.data_dist[index,] if self.data_dist is not None else torch.tensor([0])
+        return (da, da_wise, da_label.long(), da_dist)
 
     def __len__(self):
         return self.data_label.size()[0]
@@ -181,7 +223,7 @@ def count_training_evts(filenamelist):
         f = h5py.File(file, 'r')
         label = f['feature']
         #tot_n += label.shape[0]
-        tot_n += np.sum( np.logical_and(label[:,1,parsed['iSeed'],parsed['iSeed']] > parsed['E_min'],label[:,1,parsed['iSeed'],parsed['iSeed']] < parsed['E_max']) )
+        tot_n += np.sum( np.logical_and(label[:,1,0] > parsed['E_min'],label[:,1,0] < parsed['E_max']) )
         #tmp_index = label[:,9]<=0 ##no c14 hit
         #tmp_index1 = label[:,9]>nhit_c14 # c14 hit
         #tot_n_pu += int( np.sum(tmp_index1) )
@@ -331,54 +373,7 @@ class NN(object):
         self.test_file_block  = file_block(parsed['test_file' ],parsed['test_file_bsize'])
         #print(f'train file blocks={self.train_file_block}')
         self.kwargs = {'num_workers': 1, 'pin_memory': True} if self.cuda else {}
-        self.input_start = 0
-        if self.parsed['notime']:
-            self.input_start = 1
-        self.input_end = 13
-        if self.parsed['usemc']:
-            self.input_end += 3
-
-        cfg = {
-            'A0': [64,128,256,'M'],
-            'A1': [4    , 'M', 16,'M','M'], ##ok
-            'A2': [4    , 'M', 16,'M', 32,'M',64,'M'],
-            'A3': [16,16,32,32 , 'M', 16,'M', 32,'M',64, 64,'M'], ##good
-            'A4': [4    , 'M', 16,'M', 32, 32,'M',64, 64,'M'], 
-            'A5': [4,4  , 'M', 16,16,'M', 32, 32,'M',64, 64,'M'], 
-            'A31': [4    , 'M', 16,'M', 32,'M',64, 64, 64, 'M'],
-            'A32': [4    , 'M', 16,'M', 32,'M',64, 64, 64, 64, 'M'],
-            'A33': [4    , 'M', 16,'M', 32,'M',64, 64,'M', 128, 128, 'M'],
-            'A': [64    , 'M', 128     , 'M', 256, 256          , 'M', 512, 512          , 'M', 512, 512          , 'M'],
-            'B': [64, 64, 'M', 128, 128, 'M', 256, 256          , 'M', 512, 512          , 'M', 512, 512          , 'M'],
-            'C': [64, 64, 'M', 128, 128, 'M', 256, 256, 256     , 'M', 512, 512, 512     , 'M'                         ],
-            'D': [64, 64, 'M', 128, 128, 'M', 256, 256, 256     , 'M', 512, 512, 512     , 'M', 512, 512, 512     , 'M'],
-            'E': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
-        }
-        #n_inputs = {'A0':256,'A1':6720,'A2':6272,'A3':2816,'A33':2688,'A':10752,'C':50176,'D':10752}##5x5
-        n_inputs = {'A0':1024,'A1':6720,'A2':6272,'A3':2816,'A33':2688,'A':10752,'C':50176,'D':10752}##7x7
-        if parsed['useRes']:
-            n_inputs = {'A0':1680,'A1':6720,'A2':6272,'A3':5952,'A33':2688,'A':10752,'C':50176,'D':10752}
-        
-        print('fcs=',parsed['fcs'])
-        hyperparameters = {
-            'in_channels': int(self.input_end-self.input_start),
-            'features_cfg': cfg[parsed['cfg'] ],
-            'fcs_cfg':parsed['fcs'],
-            'n_input':n_inputs[parsed['cfg'] ],
-            'dropout':parsed['Dropout'],
-            'Batch_Norm':parsed['BatchNorm'],
-            'useRes':parsed['useRes'],
-            'bn_after': False,
-            'bn_input': False
-        }
-        self.model = Vgg(hyperparameters).to(self.device)
-        print('in_channels=',hyperparameters['in_channels'])
-        version_str = torch.__version__ 
-        version_tuple = tuple(map(int, version_str.split('.')[:3]))
-        if version_tuple > (2,0,0):
-            self.model = torch.compile(self.model)
-            print('compiled model !')
- 
+        self.model = CrystalNet(input_dim = 12 if self.parsed['notime'] else 13, ext_dim=0, output_dim = 1, grav_dim = 128, hidden_dim = 256, n_gravnet_blocks = 3, n_postgn_dense_blocks = 4, dropout = 0.1).to(self.device)
         self.loss = nn.L1Loss()
    
         if parsed['Restore']:
@@ -475,15 +470,14 @@ class NN(object):
         total_corr = 0
         n_total = 0
         for i in idx:
-            dataset = Dataset(filenamelist=self.train_file_block[i])
-            train_loader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=True, **self.kwargs)
-            for batch_idx, (da, da_label) in enumerate(train_loader):
-                da = da.to(self.device)   
-                da_label = da_label.to(self.device)   
+            dataset = build_graph(filenamelist=self.train_file_block[i])
+            train_loader = GraphDataLoader(dataset, batch_size=self.batch_size, shuffle=True, **self.kwargs)
+            for grs in train_loader:
+                grs = grs.to(self.device)   
                 self.optimizer.zero_grad()
-                tmp_list = range(self.input_start,self.input_end)
-                z = self.model(da[:,tmp_list,:,:], torch.tensor(0).to(self.device))
-                loss = self.loss(input=z.squeeze(), target=da_label[:,0].squeeze())
+                tmp_list = range(1,13) if self.parsed['notime'] else range(0,13)
+                z = self.model(grs.x[:,tmp_list], grs.batch, torch.tensor(0).to(self.device))
+                loss = self.loss(input=z.squeeze(), target=grs.y[:,0].squeeze())
                 loss.backward()
                 if self.parsed['clip_grad'] != 0: torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.parsed['clip_grad'])
                 self.optimizer.step()
@@ -501,15 +495,15 @@ class NN(object):
         total_loss = 0
         n_total = 0
         for i in self.valid_file_block:
-            dataset = Dataset(filenamelist=self.valid_file_block[i])
-            valid_loader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, **self.kwargs)
+            dataset = build_graph(filenamelist=self.valid_file_block[i])
+            validation_loader = GraphDataLoader(dataset, batch_size=self.batch_size, shuffle=False, **self.kwargs)
             with torch.no_grad():
-                for batch_idx, (da, da_label) in enumerate(valid_loader):
-                    da = da.to(self.device)   
-                    da_label = da_label.to(self.device)   
-                    tmp_list = range(self.input_start,self.input_end)
-                    z = self.model(da[:,tmp_list,:,:], torch.tensor(0).to(self.device))
-                    loss = self.loss(input=z.squeeze(), target=da_label[:,0].squeeze())
+                for grs in validation_loader:
+
+                    grs = grs.to(self.device)   
+                    tmp_list = range(1,13) if self.parsed['notime'] else range(0,13) 
+                    z = self.model(grs.x[:,tmp_list], grs.batch, torch.tensor(0).to(self.device))
+                    loss = self.loss(input=z.squeeze(), target=grs.y[:,0].squeeze())
                     total_loss += loss.item()*z.size(0)
                     n_total += z.size(0)
         return (total_loss, total_corr, n_total)
@@ -524,16 +518,15 @@ class NN(object):
         data_out = None
         batch_out = None
         for i in self.test_file_block:
-            dataset = Dataset(filenamelist=self.test_file_block[i])
-            test_loader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, **self.kwargs)
+            dataset = build_graph(filenamelist=self.test_file_block[i])
+            test_loader = GraphDataLoader(dataset, batch_size=self.batch_size, shuffle=False, **self.kwargs)
             with torch.no_grad():
-                for batch_idx, (da, da_label) in enumerate(test_loader):
-                    da = da.to(self.device)   
-                    da_label = da_label.to(self.device)   
-                    tmp_list = range(self.input_start,self.input_end)
-                    z = self.model(da[:,tmp_list,:,:], torch.tensor(0).to(self.device))
+                for grs in test_loader:
+                    grs = grs.to(self.device)   
+                    tmp_list = range(1,13) if self.parsed['notime'] else range(0,13) 
+                    z = self.model(grs.x[:,tmp_list], grs.batch, torch.tensor(0).to(self.device))
                     y_pred = z.cpu().detach().numpy()##N,1
-                    Y     =  da_label.cpu().detach().numpy()##N,3
+                    Y     = grs.y    .cpu().detach().numpy()##N,5
                     out  =  np.concatenate((Y,y_pred), axis=1)
                     data_out = out   if data_out is None else np.concatenate((data_out, out  ), axis=0)
                     #batch_out = batch   if batch_out is None else np.concatenate((batch_out, batch  ), axis=0)
@@ -627,20 +620,15 @@ if (__name__ == '__main__'):
     parser.add_argument('--loss' , default='', type=str, help='')
     parser.add_argument('--ps_features', default=32, type=int, help='')
     parser.add_argument('--ps_input_dropout', default=0.0, type=float, help='')
-    parser.add_argument('--psencoding', action='store', type=ast.literal_eval, default=False, help='')
+    parser.add_argument('--for_inference', action='store', type=ast.literal_eval, default=False, help='')
     parser.add_argument('--fcs', nargs='+', type=int, help='')
-    parser.add_argument('--emb_dim', default=32, type=int, help='')
-    parser.add_argument('--n_ext', default=0, type=int, help='')
+    parser.add_argument('--Np_min', default=2, type=int, help='')
+    parser.add_argument('--knn', default=1, type=int, help='')
     parser.add_argument('--activation' , default='relu', type=str, help='')
     parser.add_argument('--weight', default=1., type=float, help='')
     parser.add_argument('--notime', action='store', type=ast.literal_eval, default=True, help='')
-    parser.add_argument('--usemc', action='store', type=ast.literal_eval, default=False, help='use mc theta, sinphi, cosphi')
-    parser.add_argument('--useRes', action='store', type=ast.literal_eval, default=False, help='')
-    parser.add_argument('--E_min', default=0.0, type=float, help='')
-    parser.add_argument('--E_max', default=10.0, type=float, help='')
-    parser.add_argument('--useSeed', action='store', type=ast.literal_eval, default=False, help='')
-    parser.add_argument('--useAll', action='store', type=ast.literal_eval, default=False, help='')
-    parser.add_argument('--iSeed', default=3, type=int, help='2 for 5x5, 3 for 7x7')
+    parser.add_argument('--E_min', default=0, type=float, help='')
+    parser.add_argument('--E_max', default=10, type=float, help='')
     
     parsed = vars(parser.parse_args())
 

@@ -20,7 +20,7 @@ import random
 #import torch.distributions as td
 #from matplotlib.lines import Line2D
 #from particle_net import get_model_decay, get_model_TwoBodys, get_model_TwoBodysV2, get_model_TwoBodysV3
-from CNNModel import Vgg
+from TFModel import TFENet
 #torch.autograd.set_detect_anomaly(True)
 try:
     import nvidia_smi
@@ -138,29 +138,28 @@ class Dataset(torch.utils.data.Dataset):
         self.data_label = None
         for file in filenamelist:
             f = h5py.File(file, 'r')
-            df = f['feature'][:]##N,13,25
+            df = f['feature'][:]##N,13,49
             df_label = f['label'][:]
             #tmp_idx  = df[:,1,0] > parsed['E_min']
-            tmp_idx = np.logical_and(df[:,1,parsed['iSeed'],parsed['iSeed']] > parsed['E_min'], df[:,1,parsed['iSeed'],parsed['iSeed']] < parsed['E_max'])
+            tmp_idx = np.logical_and(df[:,1,0] > parsed['E_min'], df[:,1,0] < parsed['E_max'])
             df = df[tmp_idx]
             df_label = df_label[tmp_idx]
             if df.shape[0] <=0:continue
-            df_sub = np.sum(df[:,1,:,:],axis=(1,2),keepdims=False)-df[:,1,parsed['iSeed'],parsed['iSeed']]
-            tmp_idx = df_sub > 0
+            df_sub = df[:,1,1:]##N,24
+            tmp_idx = np.sum(df_sub,axis=1,keepdims=False) > 0
             df = df[tmp_idx]
             df_label = df_label[tmp_idx]
             if df.shape[0] <=0:continue
-            df[:,0,:,:] /= 40.
+            df[:,0,:] /= 40.
             df_label[:,0] /= parsed['E_scale']
+            #df_seed = df[:,:,0 ]
+            #df_sub  = df[:,:,1:]
             if parsed['useSeed']:
-                #df[:,1,2,2] = 0. ##set seed e to 0
-                df[:,1,parsed['iSeed'],parsed['iSeed']] = 0. ##set seed e to 0,FIXME, for 7x7
-                #pass
+                df[:,1,0] = 0. ##set seed e to 0
             elif parsed['useAll']:
-                pass
+                pass ## use all crystals
             else:
-                #df[:,:,2,2] = 0. ##set seed e to 0
-                df[:,:,parsed['iSeed'],parsed['iSeed']] = 0. ##set seed e to 0,FIXME, for 7x7
+                df[:,:,0] = 0. ##set seed to 0
             tmp_label = torch.tensor(df_label.astype('float32'))
             self.data_label = tmp_label if self.data_label is None else torch.cat((self.data_label,tmp_label),0)
             tmp_tensor = torch.tensor(df.astype('float32'))
@@ -181,7 +180,7 @@ def count_training_evts(filenamelist):
         f = h5py.File(file, 'r')
         label = f['feature']
         #tot_n += label.shape[0]
-        tot_n += np.sum( np.logical_and(label[:,1,parsed['iSeed'],parsed['iSeed']] > parsed['E_min'],label[:,1,parsed['iSeed'],parsed['iSeed']] < parsed['E_max']) )
+        tot_n += np.sum( np.logical_and(label[:,1,0] > parsed['E_min'],label[:,1,0] < parsed['E_max']) )
         #tmp_index = label[:,9]<=0 ##no c14 hit
         #tmp_index1 = label[:,9]>nhit_c14 # c14 hit
         #tot_n_pu += int( np.sum(tmp_index1) )
@@ -337,42 +336,17 @@ class NN(object):
         self.input_end = 13
         if self.parsed['usemc']:
             self.input_end += 3
-
-        cfg = {
-            'A0': [64,128,256,'M'],
-            'A1': [4    , 'M', 16,'M','M'], ##ok
-            'A2': [4    , 'M', 16,'M', 32,'M',64,'M'],
-            'A3': [16,16,32,32 , 'M', 16,'M', 32,'M',64, 64,'M'], ##good
-            'A4': [4    , 'M', 16,'M', 32, 32,'M',64, 64,'M'], 
-            'A5': [4,4  , 'M', 16,16,'M', 32, 32,'M',64, 64,'M'], 
-            'A31': [4    , 'M', 16,'M', 32,'M',64, 64, 64, 'M'],
-            'A32': [4    , 'M', 16,'M', 32,'M',64, 64, 64, 64, 'M'],
-            'A33': [4    , 'M', 16,'M', 32,'M',64, 64,'M', 128, 128, 'M'],
-            'A': [64    , 'M', 128     , 'M', 256, 256          , 'M', 512, 512          , 'M', 512, 512          , 'M'],
-            'B': [64, 64, 'M', 128, 128, 'M', 256, 256          , 'M', 512, 512          , 'M', 512, 512          , 'M'],
-            'C': [64, 64, 'M', 128, 128, 'M', 256, 256, 256     , 'M', 512, 512, 512     , 'M'                         ],
-            'D': [64, 64, 'M', 128, 128, 'M', 256, 256, 256     , 'M', 512, 512, 512     , 'M', 512, 512, 512     , 'M'],
-            'E': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
-        }
-        #n_inputs = {'A0':256,'A1':6720,'A2':6272,'A3':2816,'A33':2688,'A':10752,'C':50176,'D':10752}##5x5
-        n_inputs = {'A0':1024,'A1':6720,'A2':6272,'A3':2816,'A33':2688,'A':10752,'C':50176,'D':10752}##7x7
-        if parsed['useRes']:
-            n_inputs = {'A0':1680,'A1':6720,'A2':6272,'A3':5952,'A33':2688,'A':10752,'C':50176,'D':10752}
-        
-        print('fcs=',parsed['fcs'])
+       
         hyperparameters = {
             'in_channels': int(self.input_end-self.input_start),
-            'features_cfg': cfg[parsed['cfg'] ],
             'fcs_cfg':parsed['fcs'],
-            'n_input':n_inputs[parsed['cfg'] ],
             'dropout':parsed['Dropout'],
-            'Batch_Norm':parsed['BatchNorm'],
-            'useRes':parsed['useRes'],
-            'bn_after': False,
-            'bn_input': False
+            'emb_dim':parsed['emb_dim'],
+            'ext_dim':0,
+            'psencoding':parsed['psencoding']
         }
-        self.model = Vgg(hyperparameters).to(self.device)
-        print('in_channels=',hyperparameters['in_channels'])
+        print('in_channels=',hyperparameters['in_channels'],',ext_dim=',hyperparameters['ext_dim'])
+        self.model = TFENet(hyperparameters).to(self.device)
         version_str = torch.__version__ 
         version_tuple = tuple(map(int, version_str.split('.')[:3]))
         if version_tuple > (2,0,0):
@@ -482,7 +456,8 @@ class NN(object):
                 da_label = da_label.to(self.device)   
                 self.optimizer.zero_grad()
                 tmp_list = range(self.input_start,self.input_end)
-                z = self.model(da[:,tmp_list,:,:], torch.tensor(0).to(self.device))
+                #print('da[:,tmp_list,:]=',da[:,tmp_list,:].size(),',da_label[:,2:]=',da_label[:,2:].size())
+                z = self.model(da[:,tmp_list,:], torch.tensor(0).to(self.device))
                 loss = self.loss(input=z.squeeze(), target=da_label[:,0].squeeze())
                 loss.backward()
                 if self.parsed['clip_grad'] != 0: torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.parsed['clip_grad'])
@@ -508,7 +483,7 @@ class NN(object):
                     da = da.to(self.device)   
                     da_label = da_label.to(self.device)   
                     tmp_list = range(self.input_start,self.input_end)
-                    z = self.model(da[:,tmp_list,:,:], torch.tensor(0).to(self.device))
+                    z = self.model(da[:,tmp_list,:], torch.tensor(0).to(self.device))
                     loss = self.loss(input=z.squeeze(), target=da_label[:,0].squeeze())
                     total_loss += loss.item()*z.size(0)
                     n_total += z.size(0)
@@ -531,9 +506,9 @@ class NN(object):
                     da = da.to(self.device)   
                     da_label = da_label.to(self.device)   
                     tmp_list = range(self.input_start,self.input_end)
-                    z = self.model(da[:,tmp_list,:,:], torch.tensor(0).to(self.device))
+                    z = self.model(da[:,tmp_list,:], torch.tensor(0).to(self.device))
                     y_pred = z.cpu().detach().numpy()##N,1
-                    Y     =  da_label.cpu().detach().numpy()##N,3
+                    Y     =  da_label.cpu().detach().numpy()##N,13
                     out  =  np.concatenate((Y,y_pred), axis=1)
                     data_out = out   if data_out is None else np.concatenate((data_out, out  ), axis=0)
                     #batch_out = batch   if batch_out is None else np.concatenate((batch_out, batch  ), axis=0)
@@ -630,17 +605,15 @@ if (__name__ == '__main__'):
     parser.add_argument('--psencoding', action='store', type=ast.literal_eval, default=False, help='')
     parser.add_argument('--fcs', nargs='+', type=int, help='')
     parser.add_argument('--emb_dim', default=32, type=int, help='')
-    parser.add_argument('--n_ext', default=0, type=int, help='')
+    parser.add_argument('--knn', default=1, type=int, help='')
     parser.add_argument('--activation' , default='relu', type=str, help='')
     parser.add_argument('--weight', default=1., type=float, help='')
     parser.add_argument('--notime', action='store', type=ast.literal_eval, default=True, help='')
     parser.add_argument('--usemc', action='store', type=ast.literal_eval, default=False, help='use mc theta, sinphi, cosphi')
-    parser.add_argument('--useRes', action='store', type=ast.literal_eval, default=False, help='')
-    parser.add_argument('--E_min', default=0.0, type=float, help='')
+    parser.add_argument('--E_min', default=0, type=float, help='')
     parser.add_argument('--E_max', default=10.0, type=float, help='')
     parser.add_argument('--useSeed', action='store', type=ast.literal_eval, default=False, help='')
     parser.add_argument('--useAll', action='store', type=ast.literal_eval, default=False, help='')
-    parser.add_argument('--iSeed', default=3, type=int, help='2 for 5x5, 3 for 7x7')
     
     parsed = vars(parser.parse_args())
 

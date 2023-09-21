@@ -19,8 +19,7 @@ import json
 import random
 #import torch.distributions as td
 #from matplotlib.lines import Line2D
-#from particle_net import get_model_decay, get_model_TwoBodys, get_model_TwoBodysV2, get_model_TwoBodysV3
-from TFModel import TFENet
+import particle_net
 #torch.autograd.set_detect_anomaly(True)
 try:
     import nvidia_smi
@@ -168,8 +167,9 @@ class Dataset(torch.utils.data.Dataset):
                                    
     def __getitem__(self, index):
         da = self.data[index,] if self.data != None else torch.tensor([0])
+        da_pos = self.data[index,11:13,:] if self.data != None else torch.tensor([0])
         da_label = self.data_label[index,] if self.data_label != None else torch.tensor([0])
-        return (da, da_label)
+        return (da, da_pos,da_label)
 
     def __len__(self):
         return self.data_label.size()[0]
@@ -338,15 +338,10 @@ class NN(object):
             self.input_end += 3
        
         hyperparameters = {
-            'in_channels': int(self.input_end-self.input_start),
-            'fcs_cfg':parsed['fcs'],
-            'dropout':parsed['Dropout'],
-            'emb_dim':parsed['emb_dim'],
-            'ext_dim':0,
-            'psencoding':parsed['psencoding']
+            'knn':parsed['knn'],
+            'ps_features':int(self.input_end-self.input_start),
         }
-        print('in_channels=',hyperparameters['in_channels'],',ext_dim=',hyperparameters['ext_dim'])
-        self.model = TFENet(hyperparameters).to(self.device)
+        self.model = particle_net.get_model(**hyperparameters).to(self.device)
         version_str = torch.__version__ 
         version_tuple = tuple(map(int, version_str.split('.')[:3]))
         if version_tuple > (2,0,0):
@@ -451,13 +446,14 @@ class NN(object):
         for i in idx:
             dataset = Dataset(filenamelist=self.train_file_block[i])
             train_loader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=True, **self.kwargs)
-            for batch_idx, (da, da_label) in enumerate(train_loader):
+            for batch_idx, (da, da_pos, da_label) in enumerate(train_loader):
                 da = da.to(self.device)   
+                da_pos = da_pos.to(self.device)   
                 da_label = da_label.to(self.device)   
                 self.optimizer.zero_grad()
                 tmp_list = range(self.input_start,self.input_end)
                 #print('da[:,tmp_list,:]=',da[:,tmp_list,:].size(),',da_label[:,2:]=',da_label[:,2:].size())
-                z = self.model(da[:,tmp_list,:], torch.tensor(0).to(self.device))
+                z = self.model(da_pos, da[:,tmp_list,:], None)
                 loss = self.loss(input=z.squeeze(), target=da_label[:,0].squeeze())
                 loss.backward()
                 if self.parsed['clip_grad'] != 0: torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.parsed['clip_grad'])
@@ -479,11 +475,12 @@ class NN(object):
             dataset = Dataset(filenamelist=self.valid_file_block[i])
             valid_loader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, **self.kwargs)
             with torch.no_grad():
-                for batch_idx, (da, da_label) in enumerate(valid_loader):
+                for batch_idx, (da, da_pos, da_label) in enumerate(valid_loader):
                     da = da.to(self.device)   
+                    da_pos = da_pos.to(self.device)   
                     da_label = da_label.to(self.device)   
                     tmp_list = range(self.input_start,self.input_end)
-                    z = self.model(da[:,tmp_list,:], torch.tensor(0).to(self.device))
+                    z = self.model(da_pos, da[:,tmp_list,:], None)
                     loss = self.loss(input=z.squeeze(), target=da_label[:,0].squeeze())
                     total_loss += loss.item()*z.size(0)
                     n_total += z.size(0)
@@ -502,11 +499,12 @@ class NN(object):
             dataset = Dataset(filenamelist=self.test_file_block[i])
             test_loader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, **self.kwargs)
             with torch.no_grad():
-                for batch_idx, (da, da_label) in enumerate(test_loader):
+                for batch_idx, (da, da_pos, da_label) in enumerate(test_loader):
                     da = da.to(self.device)   
+                    da_pos = da_pos.to(self.device)   
                     da_label = da_label.to(self.device)   
                     tmp_list = range(self.input_start,self.input_end)
-                    z = self.model(da[:,tmp_list,:], torch.tensor(0).to(self.device))
+                    z = self.model(da_pos, da[:,tmp_list,:], None)
                     y_pred = z.cpu().detach().numpy()##N,1
                     Y     =  da_label.cpu().detach().numpy()##N,13
                     out  =  np.concatenate((Y,y_pred), axis=1)
@@ -600,12 +598,11 @@ if (__name__ == '__main__'):
     parser.add_argument('--clip_grad', default=0, type=float, help='')
     parser.add_argument('--scheduler' , default='StepLR', type=str, help='')
     parser.add_argument('--loss' , default='', type=str, help='')
-    parser.add_argument('--ps_features', default=32, type=int, help='')
     parser.add_argument('--ps_input_dropout', default=0.0, type=float, help='')
     parser.add_argument('--psencoding', action='store', type=ast.literal_eval, default=False, help='')
     parser.add_argument('--fcs', nargs='+', type=int, help='')
     parser.add_argument('--emb_dim', default=32, type=int, help='')
-    parser.add_argument('--knn', default=1, type=int, help='')
+    parser.add_argument('--knn', default=7, type=int, help='')
     parser.add_argument('--activation' , default='relu', type=str, help='')
     parser.add_argument('--weight', default=1., type=float, help='')
     parser.add_argument('--notime', action='store', type=ast.literal_eval, default=True, help='')

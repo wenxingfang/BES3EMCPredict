@@ -48,7 +48,11 @@ conda activate pyTorch_1p8
 which python
 /usr/local/cuda/bin/nvcc --version
 export workpath=/hpcfs/juno/junogpu/fangwx/FastSim/BES/BES3EMCPredict/
+##use 5X5, res:
+python $workpath/train_TF_mcE.py --notime False  --useAll True --emb_dim 64 --fcs 1024 128 1 --epochs 100 --lr 1e-3 --batch 256 --scheduler 'OneCycleLR' --train_file $workpath/dataset/Denoise/gamma_0p05to1GeV_5x5_NBg3_points/train.txt --valid_file $workpath/dataset/Denoise/gamma_0p05to1GeV_5x5_NBg3_points/valid.txt --test_file $workpath/dataset/Denoise/gamma_0p05to1GeV_5x5_NBg3_points/test.txt --out_name $workpath/model/tf_denoise_addTime_5x5.pth
+##use 5X5, res:epoch49,train_loss=0.0267298908098564,valid_loss=0.02961446312969924, lr=9.467326543365396e-07
+#python $workpath/train_TF_mcE.py --notime False  --useAll True --emb_dim 64 --fcs 1024 128 1 --epochs 50 --lr 5e-4 --batch 256 --scheduler 'OneCycleLR' --train_file $workpath/dataset/Denoise/gamma_0p05to1GeV_5x5_NBg3_points/train.txt --valid_file $workpath/dataset/Denoise/gamma_0p05to1GeV_5x5_NBg3_points/valid.txt --test_file $workpath/dataset/Denoise/gamma_0p05to1GeV_5x5_NBg3_points/test.txt --out_name $workpath/model/tf_denoise_addTime_5x5.pth
 ##res:epoch50,train_loss=0.02689562696138933,valid_loss=0.02955779883920487, lr=2.0046979668752146e-09
-python $workpath/train_TF_mcE.py --notime False  --useAll True --emb_dim 64 --fcs 1024 128 1 --epochs 50 --lr 5e-4 --batch 256 --scheduler 'OneCycleLR' --train_file $workpath/dataset/Denoise/train.txt --valid_file $workpath/dataset/Denoise/valid.txt --test_file $workpath/dataset/Denoise/train.txt --out_name $workpath/model/tf_denoise_addTime.pth
+#python $workpath/train_TF_mcE.py --notime False  --useAll True --emb_dim 64 --fcs 1024 128 1 --epochs 50 --lr 5e-4 --batch 256 --scheduler 'OneCycleLR' --train_file $workpath/dataset/Denoise/train.txt --valid_file $workpath/dataset/Denoise/valid.txt --test_file $workpath/dataset/Denoise/train.txt --out_name $workpath/model/tf_denoise_addTime.pth
 ##res:epoch50,train_loss=0.028053459134588385,valid_loss=0.02989974011838969, lr=2.0046979668752146e-09
 #python $workpath/train_TF_mcE.py  --useAll True --emb_dim 64 --fcs 1024 128 1 --epochs 50 --lr 5e-4 --batch 256 --scheduler 'OneCycleLR' --train_file $workpath/dataset/Denoise/train.txt --valid_file $workpath/dataset/Denoise/valid.txt --test_file $workpath/dataset/Denoise/train.txt --out_name $workpath/model/tf_denoise.pth

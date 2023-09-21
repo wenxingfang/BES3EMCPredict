@@ -14,7 +14,7 @@
 #SBATCH --account=junogpu
   
 # Specify your job name, optional option, but strongly recommand to specify some name
-#SBATCH --job-name=gnn_de
+#SBATCH --job-name=t_pnet_de
   
 # Specify how many cores you will need, default is one if not specified
 #SBATCH --ntasks=1
@@ -22,8 +22,8 @@
 # Specify the output file path of your job
 # Attention!! Your afs account must have write access to the path
 # Or the job will be FAILED!
-#SBATCH --output=/hpcfs/juno/junogpu/fangwx/FastSim/BES/BES3EMCPredict/log_train_gnn_denoise.out
-#SBATCH --error=//hpcfs/juno/junogpu/fangwx/FastSim/BES/BES3EMCPredict/log_train_gnn_denoise.err
+#SBATCH --output=/hpcfs/juno/junogpu/fangwx/FastSim/BES/BES3EMCPredict/log_test_PNet_denoise.out
+#SBATCH --error=//hpcfs/juno/junogpu/fangwx/FastSim/BES/BES3EMCPredict/log_test_PNet_denoise.err
   
 # Specify memory to use, or slurm will allocate all available memory in MB
 #SBATCH --cpus-per-task=1
@@ -48,5 +48,5 @@ conda activate pyTorch_1p8
 which python
 /usr/local/cuda/bin/nvcc --version
 export workpath=/hpcfs/juno/junogpu/fangwx/FastSim/BES/BES3EMCPredict/
-##res:epoch50,train_loss=0.04087131995851997,valid_loss=0.05805355580919749, lr=4.2188534784376465e-07
-python $workpath/train_gnn_mcE.py --notime False --epochs 50 --lr 5e-4 --batch 256 --scheduler 'OneCycleLR' --train_file $workpath/dataset/Denoise/train.txt --valid_file $workpath/dataset/Denoise/valid.txt --test_file $workpath/dataset/Denoise/train.txt --out_name $workpath/model/gnn_denoise_addTime.pth
+##res:epoch50,train_loss=0.029061533881441306,valid_loss=0.030155581997027853, lr=2.0046979668752146e-09
+python $workpath/train_PatNet_mcE.py --notime False --useAll True --epochs 50 --lr 5e-4 --batch 256 --scheduler 'OneCycleLR' --DoOptimization False  --DoTest True --Restore True  --restore_file $workpath/model/pnet_denoise_addTime_epoch49.pth --train_file $workpath/dataset/Denoise/train.txt --valid_file $workpath/dataset/Denoise/valid.txt --test_file $workpath/dataset/Denoise/train.txt --outFile $workpath/Pred/pnet_train_denoise_mcE_7x7_useTime.h5
